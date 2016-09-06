@@ -2,7 +2,6 @@
 
 A n.io module implementing file based state saving and restoration.
 
-
 ## Configuration
 
 [persistence]
