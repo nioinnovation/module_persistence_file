@@ -1,7 +1,7 @@
 from nio.modules.context import ModuleContext
 from nio.modules.persistence.module import PersistenceModule
 from nio.modules.settings import Settings
-from niocore.modules.persistence.file import Persistence
+from . import Persistence
 from nio import discoverable
 
 
