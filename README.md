@@ -14,4 +14,4 @@ Location to save persistence file.
 - None
 
 ## Usage
-This repo must be checked out (`git submodule`) or linked (`ln -s`) into a user's `niocore/modules/persistence directory` as `file`. Any other directory name will break the import paths.
+This repo must be checked out (`git submodule`) or linked (`ln -s`) into a user's directory
