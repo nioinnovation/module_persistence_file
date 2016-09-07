@@ -1,6 +1,6 @@
 import os
 import glob
-from niocore.modules.persistence.file.module import FilePersistenceModule
+from ..module import FilePersistenceModule
 from nio.modules.persistence import Persistence
 from nio.modules.context import ModuleContext
 from niocore.testing.service_test_case import NIOServiceTestCase

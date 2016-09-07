@@ -2,7 +2,7 @@ import pickle
 from os import makedirs
 from threading import Lock
 
-from niocore.modules.persistence.file.resolver import FilePersistenceResolver
+from .resolver import FilePersistenceResolver
 from niocore.util.codec import load_pickle
 from nio.util.logging import get_nio_logger
 from niocore.util.environment import NIOEnvironment
