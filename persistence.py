@@ -1,192 +1,258 @@
-import pickle
-from os import makedirs
-from threading import Lock
+import os
+from enum import Enum
 
-from .resolver import FilePersistenceResolver
-from niocore.util.codec import load_pickle
+from niocore.util.codec import load_pickle, load_json, save_pickle, save_json
 from nio.util.logging import get_nio_logger
 from niocore.util.environment import NIOEnvironment
 
 
 class Persistence(object):
 
-    """ Persistence Module
+    """ File based persistence module implementation
 
-    This class encapsulates the user-facing interface to NIO's
-    persistence layer. Block writers use this module to save dynamic
-    data at runtime, allowing it to persist in the block instance
-    after a service/instance restart.
+    This module implements the Persistence interface saving the information ]
+    in either pickle or json format as specified when module is configured
+    (default pickle)
 
-    Persistence data is namespaced on a service-by-service basis. That is,
-    blocks with the same name in different services can persist dynamic
-    data independently.
+    When saving an item within a collection, root_id is interpreted as an
+    additional level, its filename will be then:
+    [root_folder]/[root_id]/[collection]/id if root_id not is empty, otherwise
+    [root_folder]/[collection]/id
 
-    Args:
-        name (str): The name of the block whose data will be persisted.
-
-    Example:
-        self.persistence.store('foo', 'bar')
-        self.persistence.save() # saves the stored k/v store to disk
-        val = self.persistence.load('foo') # now val == 'bar'
-
+    When item does not belong to a collection, its filename will be then:
+    [root_folder]/[root_id]_[id] if root_id is not empty, otherwise:
+    [root_folder]/[id]
     """
 
-    _service = ''
-    _target = None
-    _file_lock = Lock()
+    class Format(Enum):
+        pickle = 1
+        json = 2
 
-    def __init__(self, name):
-        """ Constructor for the Persistence module """
-        self._resolver = FilePersistenceResolver(self._target)
-        self._name = name
-        self._filename = self._resolver.resolve(self._service)
-        self._values = {}
-        self._cleared = []
+    _root_id = ''
+    _root_folder = None
+    _format = Format.pickle
+
+    def __init__(self):
+        """ Constructor for the Persistence module
+        """
         self.logger = get_nio_logger("NIOPersistence")
 
-    def store(self, key, value):
-        """ Store a key/value datum in *memory*. This does *not* save the datum
-        to disk. Users of this module must explicitly call Persistence.save to
-        initiate disk I/O.
-
-        Args:
-            key: The key to store into
-            value: The value associated with that key
-
-        Returns:
-            None
-
-        """
-        self._values = self._values or self._load_data()
-        self._values[key] = value
-
-    def load(self, key, default=None):
-        """ Load a value from the k/v store *currently in memory*.
-        The in-memory store is updated from disk only the first time
-        load is called. However, all changes that occur during a
-        service run are reflected in the in-mem store, so periodic
-        updates are unnecessary.
-
-        Args:
-            key: The key to lookup in the store.
-            default: the value to return if the key is not present
-
-        Returns:
-            value: The value associated with that key
-
-        """
-        self._values = self._values or self._load_data()
-        return self._values.get(key, default)
-
-    def has_key(self, key):
-        """ Check whether a particular key exists in the persistence
-        key/val store.
-
-        Args:
-            key: The key in question.
-
-        Returns:
-            exists (bool)
-
-        """
-        self._values = self._values or self._load_data()
-        return key in self._values
-
-    def clear(self, key):
-        """ Remove the given key and associated value from the in-mem
-        k/v store. As above, this will not be reflected in the on-disk
-        store until Persistence.save is called.
-
-        Args:
-            key: The key pointing to the data to clear.
-
-        """
-        if self._values.get(key) is not None:
-            del self._values[key]
-        self._cleared.append(key)
-
-    def save(self):
-        """ Save the in-memory store to disk. This allows the data therein
-        to persist between instance/service restarts.
-
-        Returns:
-            None
-
-        """
-        service_data = self._load_pickle_file(self._filename)
-
-        block_data = service_data.get(self._name, {})
-
-        # delete all cleared keys from the block data about to be saved
-        block_data = self._remove_cleared_keys(block_data)
-
-        service_data[self._name] = dict(
-            list(block_data.items()) + list(self._values.items())
-        )
-        with self._file_lock:
-            f = open(self._filename, 'wb+')
-            pickle.dump(service_data, f)
-            f.close()
-
-    def _load_data(self):
-        """ Private method to read the component-specific store into memory
-        from the persistent one on disk.
-
-        Returns:
-            store (dict): The k/v store associated with this particular
-                          block within a service.
-
-        """
-        data = self._load_pickle_file(self._filename)
-        return data.get(self._name, {})
-
-    def _load_pickle_file(self, filename):
-        """Load a pickled file into a dictionary
-
-        Args:
-            filename (str): The filename where the pickle was saved
-
-        Returns:
-            out (dict): Dictionary of loaded file. If there was an error, the
-            message will be logged and an empty dict is returned.
-        """
-        data = {}
-        try:
-            with self._file_lock:
-                data = load_pickle(filename)
-        except Exception as e:  # pragma: no cover
-            self.logger.exception(
-                "Failed to parse Pickle file {0} : {1}".format(
-                    filename, type(e).__name__))
-        return data
-
-    def _remove_cleared_keys(self, block_data):
-        """" Helper method to remove cleared keys from the block data
-        before storing it back out to disk.
-
-        This allows us to work in memory, loading the persistent store
-        from disk only on a 'save' request.
-
-        """
-        for key in self._cleared:
-            if block_data.get(key) is not None:
-                del block_data[key]
-        return block_data
-
     @classmethod
-    def setup(cls, context):
-        """ Set up the persistence - this will be called before proxying.
+    def configure(cls, context):
+        """  Configures the persistence - this will be called before proxying.
 
         This method is called once in each process by the module implementation
-        and is expected to set the information for the service's persistence to
-        the class. As a result, this method must be called before the
+        and is expected to set the global information for the persistence
+        module. As a result, this method must be called before the
         implementation is proxied, since it makes use of cls which will always
         be the implementation.
         """
-        cls._service = context.service_name
-        cls._target = NIOEnvironment.get_path(context.data)
+        cls._root_id = context.root_id
+        cls._root_folder = NIOEnvironment.get_path(context.root_folder)
         try:
-            makedirs(cls._target)
+            os.makedirs(cls._root_folder)
         except OSError:
             # If the persistence target directory already exists, move on
             pass
+        cls._format = context.format
+
+    def load(self, id, collection=None, default=None):
+        """ Load an item from the persistence store.
+
+        Args:
+            id (str): Specifies the identifier of the item to load.
+            collection (str): if provided, it specifies the collection the item
+                belongs to.
+            default: the value to return if the item does not exist
+
+        Returns:
+            item: The item associated with given id
+        """
+        if collection is not None:
+            filename = self._get_collection_item_filename(id, collection)
+            return self._load_file(filename) or default
+        else:
+            filename = self._get_item_filename(id)
+            return self._load_file(filename) or default
+
+    def load_collection(self, collection, default=None):
+        """ Load a collection from the persistence store.
+
+        Args:
+            collection (str): Specifies the collection to load
+            default: the value to return if the collection does not exist
+
+        Returns:
+            items: The items associated with given collection
+        """
+        result = {}
+        collection_folder = self._get_collection_folder(collection)
+        extension = self._get_file_extension()
+        if os.path.isdir(collection_folder):
+            for filename in os.listdir(collection_folder):
+                if os.path.splitext(filename)[1] != extension:
+                    continue
+                name = os.path.splitext(os.path.basename(filename))[0]
+                result[name] = self._load_file(
+                    os.path.join(collection_folder, filename))
+        return result or default
+
+    def save(self, item, id, collection=None):
+        """ Save the item to the persistence store.
+
+        Args:
+            item: Item to save
+            id (str): Specifies the identifier of the item to save.
+            collection (str): if provided, it specifies the collection the item
+                belongs to.
+        """
+        if collection is not None:
+            filename = self._get_collection_item_filename(id, collection, True)
+            self._save_file(item, filename)
+        else:
+            filename = self._get_item_filename(id)
+            self._save_file(item, filename)
+
+    def save_collection(self, items, collection):
+        """ Save a collection to the persistence store.
+
+        Args:
+            items: Items to save
+            collection (str): Specifies the collection to save
+        """
+        collection_folder = self._get_collection_folder(collection, True)
+        for id, item in items.items():
+            filename = \
+                os.path.join(collection_folder,
+                             "{}{}".format(id, self._get_file_extension()))
+            self._save_file(item, filename)
+
+    def remove(self, id, collection=None):
+        """ Remove an item from the persistence store.
+
+        Args:
+            id (str): Specifies the identifier of the item to remove.
+            collection (str): if provided, it specifies the collection the item
+                belongs to.
+        """
+        if collection is not None:
+            filename = self._get_collection_item_filename(id, collection)
+            if os.path.isfile(filename):
+                os.remove(filename)
+        else:
+            filename = self._get_item_filename(id)
+            if os.path.isfile(filename):
+                os.remove(filename)
+
+    def remove_collection(self, collection):
+        """ Remove a collection from the persistence store.
+
+        Args:
+            collection (str): Specifies the collection to remove
+        """
+        collection_folder = self._get_collection_folder(collection)
+        if os.path.isdir(collection_folder):
+            extension = self._get_file_extension()
+            for filename in os.listdir(collection_folder):
+                if os.path.splitext(filename)[1] != extension:
+                    continue
+                os.remove(os.path.join(collection_folder, filename))
+
+    def _get_collection_folder(self, collection, ensure_dirs=False):
+        """ Find out folder location for given collection
+
+        Args:
+            collection (str): collection name
+            ensure_dirs (bool): if True, dirs are created if not exist
+
+        Returns:
+            Folder where files for given collection reside
+
+        """
+        # find out root folder interpreting _root_id as an optional additional
+        # directory level
+        root_folder = os.path.join(self._root_folder, self._root_id) \
+            if self._root_id else self._root_folder
+        # add collection name as an additional directory level
+        collection_folder = os.path.join(root_folder, collection)
+        if ensure_dirs:
+            try:
+                os.makedirs(collection_folder)
+            except FileExistsError:  # pragma: no cover
+                # No problem, the directory already exists
+                pass
+
+        return collection_folder
+
+    def _get_collection_item_filename(self, id, collection, ensure_dirs=False):
+        """ Provide filename for given id within a collection
+
+        Args:
+            id (str): item identifier
+            collection (str): collection name
+            ensure_dirs (bool): if True, dirs are created if not exist
+
+        Returns:
+            Filename for given item in the collection
+        """
+        collection_folder = \
+            self._get_collection_folder(collection, ensure_dirs=ensure_dirs)
+        return os.path.join(collection_folder,
+                            "{}{}".format(id, self._get_file_extension()))
+
+    def _get_item_filename(self, id):
+        """ Provide filename for given id
+
+        Args:
+            id (str): item identifier
+
+        Returns:
+            Filename for given item
+        """
+        filename = "{}_{}".format(self._root_id, id) if self._root_id else id
+        return os.path.join(self._root_folder,
+                            "{}{}".format(filename, self._get_file_extension()))
+
+    def _get_file_extension(self):
+        if self._format == Persistence.Format.pickle.value:
+            return ".dat"
+        else:
+            return ".cfg"
+
+    def _load_file(self, filename):
+        """ Load a file into a dictionary
+
+        Args:
+            filename (str): Absolute path to filename
+
+        Returns:
+            out (dict): Dictionary of loaded file. If there is an error, the
+                message will be logged and an empty dict is returned.
+        """
+        try:
+            if self._format == Persistence.Format.pickle.value:
+                return load_pickle(filename)
+            else:
+                return load_json(filename)
+        except Exception:  # pragma: no cover
+            self.logger.exception(
+                "Failed to parse {} file {}".format(self._format, filename))
+
+    def _save_file(self, item, filename):
+        """ Saves an item to disk
+
+        If there is an error a message will be logged
+
+        Args:
+            item (dict): item information to save
+            filename (str): Absolute path to filename
+        """
+        try:
+            if self._format == Persistence.Format.pickle.value:
+                save_pickle(filename, item)
+            else:
+                save_json(filename, item,
+                          indent=4, separators=(',', ': '), sort_keys=True)
+        except Exception:  # pragma: no cover
+            self.logger.exception(
+                "Failed to save {} file {}".format(self._format, filename))
