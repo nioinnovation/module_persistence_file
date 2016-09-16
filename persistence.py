@@ -35,7 +35,7 @@ class Persistence(object):
     def __init__(self):
         """ Constructor for the Persistence module
         """
-        self.logger = get_nio_logger("NIOPersistence")
+        self.logger = get_nio_logger("File-Persistence")
 
     @classmethod
     def configure(cls, context):
