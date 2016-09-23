@@ -1,9 +1,8 @@
 import os
 from enum import Enum
 
-from niocore.util.codec import load_pickle, load_json, save_pickle, save_json
+from .codec import load_pickle, load_json, save_pickle, save_json
 from nio.util.logging import get_nio_logger
-from niocore.util.environment import NIOEnvironment
 
 
 class Persistence(object):
@@ -48,7 +47,7 @@ class Persistence(object):
         be the implementation.
         """
         cls._root_id = context.root_id
-        cls._root_folder = NIOEnvironment.get_path(context.root_folder)
+        cls._root_folder = context.root_folder
         try:
             os.makedirs(cls._root_folder)
         except OSError:

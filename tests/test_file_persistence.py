@@ -1,7 +1,7 @@
 import os
 import shutil
 
-from niocore.testing import NIOCoreTestCase
+from nio.testing import NIOTestCase
 from nio.modules.persistence import Persistence
 from nio.modules.context import ModuleContext
 
@@ -9,7 +9,7 @@ from ..persistence import Persistence as PersistenceModule
 from ..module import FilePersistenceModule
 
 
-class TestFilePersistence(NIOCoreTestCase):
+class TestFilePersistence(NIOTestCase):
 
     cfg_dir = "{}/{}/".format(os.path.dirname(__file__), "persist_test")
 
