@@ -1,7 +1,7 @@
 import os
 from enum import Enum
 
-from .codec import load_pickle, load_json, save_pickle, save_json
+from nio.util.codec import load_pickle, load_json, save_pickle, save_json
 from nio.util.logging import get_nio_logger
 
 
@@ -250,8 +250,7 @@ class Persistence(object):
             if self._format == Persistence.Format.pickle.value:
                 save_pickle(filename, item)
             else:
-                save_json(filename, item,
-                          indent=4, separators=(',', ': '), sort_keys=True)
+                save_json(filename, item)
         except Exception:  # pragma: no cover
             self.logger.exception(
                 "Failed to save {} file {}".format(self._format, filename))
